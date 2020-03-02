@@ -15,6 +15,7 @@ printUsage() {
     echo " --lint CHECKS                  Enable linting protoc-lint (CHECKS are optional - see https://github.com/ckaznocha/protoc-gen-lint#optional-checks)"
     echo " --with-gateway                 Generate grpc-gateway files (experimental)."
     echo " --with-docs FORMAT             Generate documentation (FORMAT is optional - see https://github.com/pseudomuto/protoc-gen-doc#invoking-the-plugin)"
+    echo " --out-swagger OUT_DIR_SWAGGER  The output directory for generated files. Will be automatically created."
     echo " --with-typescript              Generate TypeScript declaration files (.d.ts files) - see https://github.com/improbable-eng/ts-protoc-gen#readme"
     echo " --with-validator               Generate validations for (${VALIDATOR_SUPPORTED_LANGUAGES[@]}) - see https://github.com/envoyproxy/protoc-gen-validate"
     echo " --go-source-relative           Make go import paths 'source_relative' - see https://github.com/golang/protobuf#parameters"
@@ -43,6 +44,7 @@ LINT_CHECKS=""
 SUPPORTED_LANGUAGES=("go" "ruby" "csharp" "java" "python" "objc" "gogo" "php" "node" "web" "cpp" "descriptor_set" "scala")
 EXTRA_INCLUDES=""
 OUT_DIR=""
+OUT_DIR_SWAGGER=""
 GO_SOURCE_RELATIVE=""
 GO_PACKAGE_MAP=""
 GO_PLUGIN="grpc"
@@ -99,6 +101,10 @@ while test $# -gt 0; do
             ;;
         --with-gateway)
             GEN_GATEWAY=true
+            shift
+            ;;
+        --out-swagger) shift
+            OUT_DIR_SWAGGER=$1
             shift
             ;;
         --with-docs)
@@ -337,20 +343,25 @@ PROTO_INCLUDE="$PROTO_INCLUDE $EXTRA_INCLUDES"
 
 if [ ! -z $PROTO_DIR ]; then
     PROTO_INCLUDE="$PROTO_INCLUDE -I $PROTO_DIR"
-    FIND_DEPTH=""
-    if [[ $GEN_LANG == "go" ]]; then
-        FIND_DEPTH="-maxdepth 1"
-    fi
-    PROTO_FILES=(`find ${PROTO_DIR} ${FIND_DEPTH} -name "*.proto"`)
+    PROTO_FILES=`find ${PROTO_DIR} -name "*.proto"`
 else
     PROTO_INCLUDE="-I . $PROTO_INCLUDE"
     PROTO_FILES=($FILE)
 fi
 
+if [[ $GEN_LANG == "go" ]]; then
+    for PROTO_FILE in $PROTO_FILES; do
+        protoc $PROTO_INCLUDE \
+            $GEN_STRING \
+            $LINT_STRING \
+            $PROTO_FILE
+    done
+else
 protoc $PROTO_INCLUDE \
     $GEN_STRING \
     $LINT_STRING \
     ${PROTO_FILES[@]}
+fi
 
 # Python also needs __init__.py files in each directory to import.
 # If __init__.py files are needed at higher level directories (i.e.
@@ -372,8 +383,23 @@ if [ $GEN_GATEWAY = true ]; then
     GATEWAY_DIR=${OUT_DIR}
     mkdir -p ${GATEWAY_DIR}
 
-    protoc $PROTO_INCLUDE \
-		--grpc-gateway_out=logtostderr=true:$GATEWAY_DIR ${PROTO_FILES[@]}
-    protoc $PROTO_INCLUDE  \
-		--swagger_out=logtostderr=true:$GATEWAY_DIR ${PROTO_FILES[@]}
+    if [ -n "$OUT_DIR_SWAGGER" ]; then 
+        mkdir -p ${OUT_DIR_SWAGGER}
+    else
+        OUT_DIR_SWAGGER=$GATEWAY_DIR
+    fi
+
+    if [[ $GEN_LANG == "go" ]]; then
+        for PROTO_FILE in $PROTO_FILES; do
+            protoc $PROTO_INCLUDE \
+                --grpc-gateway_out=logtostderr=true:$GATEWAY_DIR $PROTO_FILE
+            protoc $PROTO_INCLUDE  \
+                --swagger_out=logtostderr=true:$OUT_DIR_SWAGGER $PROTO_FILE
+        done
+    else
+        protoc $PROTO_INCLUDE \
+            --grpc-gateway_out=logtostderr=true:$GATEWAY_DIR ${PROTO_FILES[@]}
+        protoc $PROTO_INCLUDE  \
+            --swagger_out=logtostderr=true:$OUT_DIR_SWAGGER ${PROTO_FILES[@]}
+    fi
 fi
